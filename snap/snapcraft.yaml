@@ -18,7 +18,7 @@ plugs:
     interface: content
     target: $SNAP/wine-platform
     default-provider: wine-platform-i386
-  optical-drive:
+  optical-drive-plug:
     interface: optical-drive
     write: yes
 
@@ -31,7 +31,7 @@ apps:
       - wayland
       - desktop
       - desktop-legacy
-      - optical-drive
+      - optical-drive-plug
       - wine-platform-plug
 
 parts:
