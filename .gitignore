@@ -1,0 +1,11 @@
+#Ignore for snapcraft
+parts
+stage
+prime
+*.snap
+.snapcraft
+__pycache__
+*.pyc
+.directory
+.*
+!**/.gitignore

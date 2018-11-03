@@ -1,0 +1,51 @@
+name: imgburn
+version: '2.5.8.0'
+summary: ImgBurn, the ultimate image burner!
+description: |
+  ImgBurn is an optical disc authoring program that allows the recording of 
+  many types of CD, DVD and Blu-Ray images to recordable media. 
+  WARNING: this snap is only the packaged version of ImgBurn (for windows) executed with Wine.
+  This snap is maintained by Ernesto Castellotti, and is not endorsed or officially maintained by the upstream developers.
+confinement: strict
+grade: stable
+architectures:
+  - build-on: amd64
+    run-on: [amd64, i386]
+
+plugs:
+  wine-platform-plug:
+    content: wine-base-stable
+    interface: content
+    target: $SNAP/wine-platform
+    default-provider: wine-platform-i386
+  optical-drive:
+    interface: optical-drive
+    write: yes
+
+apps:
+  imgburn:
+    command: usr/bin/imgburn
+    desktop: usr/share/applications/imgburn.desktop
+    plugs: 
+      - x11
+      - wayland
+      - desktop
+      - desktop-legacy
+      - optical-drive
+      - wine-platform-plug
+
+parts:
+  imgburn:
+    plugin: nil
+    source: .
+    override-build: |
+      snapcraftctl build
+      mkdir -p "$SNAPCRAFT_PART_INSTALL/imgburn"
+      mkdir -p "$SNAPCRAFT_PART_INSTALL/usr/bin"
+      mkdir -p "$SNAPCRAFT_PART_INSTALL/usr/share/applications"
+      cp -R imgburn/. "$SNAPCRAFT_PART_INSTALL/imgburn"
+      cp scripts/imgburn "$SNAPCRAFT_PART_INSTALL/usr/bin"
+      cp scripts/imgburn.desktop "$SNAPCRAFT_PART_INSTALL/usr/share/applications"
+      chmod +x "$SNAPCRAFT_PART_INSTALL/usr/bin/imgburn"
+    stage-packages:
+      - libnotify-bin

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=ImgBurn
+GenericName=ImgBurn
+Comment=ImgBurn, the ultimate image burner!
+Encoding=UTF-8
+Version=
+Type=Application
+Terminal=false
+Exec=snap run imgburn %F
+Categories=Utility;TextEditor

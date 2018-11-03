@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+
+function prepend_dir() {
+  local var="$1"
+  local dir="$2"
+  if [ -d "$dir" ]; then
+    eval "export $var=\"\$dir\${$var:+:\$$var}\""
+  fi
+}
+
+function append_dir() {
+  local var="$1"
+  local dir="$2"
+  if [ -d "$dir" ]; then
+    eval "export $var=\"\${$var:+\$$var:}\$dir\""
+  fi
+}
+
+function make_user_fontconfig {
+  echo '<?xml version="1.0"?>'
+  echo '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">'
+  echo '<fontconfig>'
+  echo '  <include ignore_missing="yes">conf.d</include>'
+  # We need to include this default cachedir first so that caching
+  # works: without it, fontconfig will try to write to the real user home
+  # cachedir and be blocked by AppArmor.
+  echo '  <cachedir prefix="xdg">fontconfig</cachedir>'
+  echo '  <dir prefix="xdg">fonts</dir>'
+  echo '</fontconfig>'
+}
+
+needs_update=true
+
+if [ "$SNAP_DESKTOP_LAST_REVISION" = "$SNAP_REVISION" ]; then
+  needs_update=false
+fi
+
+SNAP=`echo $SNAP | sed -e "s|/var/lib/snapd||g"`
+WP=$SNAP/wine-platform
+
+if [ ! -d $WP/usr ]; then
+  $SNAP/usr/bin/notify-send "ImgBurn setup" "This snap requires a special permission to use the Wine platform, currently snap does not support auto-connection with Wine platform so the user has the task of manually executing the following command in a terminal: \"snap connect imgburn:wine-platform-plug wine-platform-i386:wine-base-stable\", sorry for the hardship" -u critical 
+  exit
+fi
+  
+WINE_BASE=wine-stable
+ARCH="i386-linux-gnu"
+export WINEARCH="win32" 
+export GTK_MODULES=""
+export WINEVERPATH=$WP/$WINE_BASE
+export WINESERVER=$WP/$WINE_BASE/bin/wineserver
+export WINELOADER=$WP/$WINE_BASE/bin/wine
+export WINEDLLPATH=$WP/$WINE_BASE/lib/wine/fakedlls
+export WINETRICKS=$WP/bin/winetricks
+export WINEPREFIX=$SNAP_USER_COMMON/.wine
+export WINEDLLOVERRIDES="mscoree,mshtml="
+export WINEDEBUG=-all
+export LD_LIBRARY_PATH="$WP/lib:$WP/lib/$ARCH:$WP/usr/lib:$WP/usr/lib/$ARCH"
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:$WP/bin:$WP/usr/bin:$WP/$WINE_BASE/bin
+# XKB config
+export XKB_CONFIG_ROOT=$WP/usr/share/X11/xkb
+
+# Give XOpenIM a chance to locate locale data.
+# This is required for text input to work in SDL2 games.
+export XLOCALEDIR=$WP/usr/share/X11/locale
+export LOCPATH=$WP/usr/lib/locale
+
+# Set XCursors path
+export XCURSOR_PATH=$WP/usr/share/icons
+
+# Fix wget: Cannot read /etc/wgetrc (Permission denied).
+export SYSTEM_WGETRC=$WP/etc/wgetrc
+
+# Mesa Libs for OpenGL support
+append_dir LD_LIBRARY_PATH $WP/usr/lib/$ARCH/mesa
+append_dir LD_LIBRARY_PATH $WP/usr/lib/$ARCH/mesa-egl
+
+# Tell libGL where to find the drivers
+export LIBGL_DRIVERS_PATH=$WP/usr/lib/$ARCH/dri
+append_dir LD_LIBRARY_PATH $LIBGL_DRIVERS_PATH
+
+# Workaround in snapd for proprietary nVidia drivers mounts the drivers in
+# /var/lib/snapd/lib/gl that needs to be in LD_LIBRARY_PATH
+# Without that OpenGL using apps do not work with the nVidia drivers.
+# Ref.: https://bugs.launchpad.net/snappy/+bug/1588192
+append_dir LD_LIBRARY_PATH /var/lib/snapd/lib/gl
+
+# Pulseaudio export
+append_dir LD_LIBRARY_PATH $WP/usr/lib/$ARCH/pulseaudio
+
+# EGL vendor files on glvnd enabled systems
+[ -d /var/lib/snapd/lib/glvnd/egl_vendor.d ] && \
+append_dir __EGL_VENDOR_LIBRARY_DIRS /var/lib/snapd/lib/glvnd/egl_vendor.d
+
+# Tell GStreamer where to find its plugins
+export GST_PLUGIN_PATH=$WP/usr/lib/$ARCH/gstreamer-1.0
+export GST_PLUGIN_SYSTEM_PATH=$WP/usr/lib/$ARCH/gstreamer-1.0
+# gst plugin scanner doesn't install in the correct path: https://github.com/ubuntu/snapcraft-desktop-helpers/issues/43
+export GST_PLUGIN_SCANNER=$WP/usr/lib/$ARCH/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner
+
+# XDG Config
+prepend_dir XDG_CONFIG_DIRS $WP/etc/xdg
+
+# Define snaps' own data dir
+prepend_dir XDG_DATA_DIRS $SNAP_USER_COMMON
+prepend_dir XDG_DATA_DIRS $SNAP_USER_DATA
+
+export XDG_DATA_HOME=$SNAP_USER_COMMON/.local/share
+mkdir -p $XDG_DATA_HOME
+
+# Workaround for GLib < 2.53.2 not searching for schemas in $XDG_DATA_HOME:
+#   https://bugzilla.gnome.org/show_bug.cgi?id=741335
+prepend_dir XDG_DATA_DIRS $XDG_DATA_HOME
+
+# Set cache folder to local path
+export XDG_CACHE_HOME=$SNAP_USER_COMMON/.cache
+mkdir -p $XDG_CACHE_HOME
+
+# Set config folder to local path
+export XDG_CONFIG_HOME=$SNAP_USER_COMMON/.config
+mkdir -p $XDG_CONFIG_HOME
+
+# Create $XDG_RUNTIME_DIR if not exists (to be removed when LP: #1656340 is fixed)
+[ -n "$XDG_RUNTIME_DIR" ] && mkdir -p $XDG_RUNTIME_DIR -m 700
+
+# Make PulseAudio socket available inside the snap-specific $XDG_RUNTIME_DIR
+if [ -n "$XDG_RUNTIME_DIR" ]; then
+    pulsenative="pulse/native"
+    pulseaudio_sockpath="$XDG_RUNTIME_DIR/../$pulsenative"
+    if [ -S "$pulseaudio_sockpath" ]; then
+        export PULSE_SERVER="unix:${pulseaudio_sockpath}"
+    fi
+fi
+
+# Keep an array of data dirs, for looping through them
+IFS=':' read -r -a data_dirs_array <<< "$XDG_DATA_DIRS"
+
+# Font Config
+export FONTCONFIG_PATH=$WP/etc/fonts
+export FONTCONFIG_FILE=$XDG_CONFIG_HOME/fontconfig/fonts.conf
+
+if [ ! -d "$WINEPREFIX" ]; then
+  mkdir -p $WINEPREFIX
+fi
+
+if [ $needs_update = true ]; then
+  rm -rf $XDG_DATA_HOME/{fontconfig,fonts,fonts-*,themes,.themes}
+  mkdir -p $XDG_CONFIG_HOME/fontconfig
+  make_user_fontconfig > $XDG_CONFIG_HOME/fontconfig/fonts.conf
+  $WINETRICKS winxp
+  
+  # Disable winedgb
+  cat > $SNAP_USER_DATA/ignoreDebugger.reg <<'EOF'
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\AeDebug]
+"Debugger"="exit"
+EOF
+
+  regedit $SNAP_USER_DATA/ignoreDebugger.reg
+fi
+
+# Gdk-pixbuf loaders
+export GDK_PIXBUF_MODULE_FILE=$XDG_CACHE_HOME/gdk-pixbuf-loaders.cache
+export GDK_PIXBUF_MODULEDIR=$WP/usr/lib/$ARCH/gdk-pixbuf-2.0/2.10.0/loaders
+if [ -f $WP/usr/lib/$ARCH/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders ] && [ ! -f "${GDK_PIXBUF_MODULE_FILE}" ]; then
+  $WP/usr/lib/$ARCH/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders > $GDK_PIXBUF_MODULE_FILE
+fi
+
+# Stop WINE from updating $WINEPREFIX automatically 
+if [ -f $WINEPREFIX/.update-timestamp ]; then
+chkstmp=$(cat $WINEPREFIX/.update-timestamp | grep disable | wc -l)
+    if [ $chkstmp -eq 0 ]; then
+        echo "disable" > "$WINEPREFIX/.update-timestamp"
+    fi
+fi
+
+[ $needs_update = true ] && echo "SNAP_DESKTOP_LAST_REVISION=$SNAP_REVISION" > $SNAP_USER_DATA/.last_revision
+
+if [ -z "$1" ] ; then
+  wine "$SNAP/imgburn/ImgBurn.exe"
+else
+  wine start /unix "$SNAP/imgburn/ImgBurn.exe" "${args[@]}"
+fi
