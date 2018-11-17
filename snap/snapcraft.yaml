@@ -32,6 +32,8 @@ apps:
       - desktop
       - desktop-legacy
       - optical-drive-plug
+      - hardware-observe
+      - hidraw
       - wine-platform-plug
 
 parts:
